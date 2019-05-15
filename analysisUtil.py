@@ -1,0 +1,129 @@
+
+
+################################################################
+#                                                              #
+#           Module for speedtest data analysis                 #
+#                                                              #
+################################################################
+
+import re 
+import os 
+import numpy as np
+import matplotlib.pyplot as plt 
+
+#-----------------------
+#
+# CONSTANTS
+#
+#-----------------------
+
+class CoordUtils:
+                coord_steps = { 00: 16, 75:12, 50:8, 38:6, 25:4, 19:3, 12:2 }
+                total_coord_extension = [-240, 240]
+                resolutions = [00, 12, 19, 25, 38, 50, 75]
+                keys = [ "timeofday[secs]", "getrusage[secs]","cycle[secs]","avg_cycle[secs]","svd_cycle[secs]","min_cycle[secs]","max_cycle[secs]","resolution","method" ]
+
+
+#-----------------------
+#
+# FUNCTIONS
+#
+#-----------------------
+
+def createDataDict(simname, path="./data/", converter=None):
+                '''
+                Creates data descriptors starting from the simulation's .data file
+                
+                >>> createDataDict(sim_name)
+                >>> out = {
+                timeofday[secs]: 
+                ...
+                }
+                '''
+                if os.path.isdir(path): os.chdir(path)
+                if not converter: converter = {11: lambda x: x=="p"}
+                data_file_name = simname + ".data"
+                raw_data = np.loadtxt(data_file_name,converters=converter)
+                #methods = np.loadtxt(data_file_name,dtype={ "names": ["methods"], "formats": ['S1']},usecols=(9,10,11))
+                #vec_data = np.loadtxt(data_file_names[1],converters=converter)
+                data = {
+                "timeofday[secs]": raw_data[:,1],
+                "getrusage[secs]": raw_data[:,2],
+                "cycle[secs]":     raw_data[:,3],
+                "avg_cycle[secs]": raw_data[:,4],
+                "svd_cycle[secs]": raw_data[:,5],
+                "min_cycle[secs]": raw_data[:,6],
+                "max_cycle[secs]": raw_data[:,7],
+                "me_per_hour":     raw_data[:,8],
+                "max_malloc[MB]": raw_data[:,9],    
+                "resolution":      raw_data[:,10],
+                "method"    :      raw_data[:,11],
+                }
+                #for i in range(len(data_keys))
+                #                data[data_keys[i]] = raw_data[:,i]
+                return data
+                
+               # v_data_ppm, v_data_weno = split_methods(v_data)
+               # n_data_ppm, n_data_weno = split_methods(n_data)
+                
+               # v_data_ppm = split_n_avg(v_data_ppm)
+               # v_data_weno = split_n_avg(v_data_weno)
+
+               # n_data_ppm = split_n_avg(n_data_ppm)
+               # n_data_weno = split_n_avg(n_data_weno)
+
+               # return {"vec": [v_data_ppm, v_data_weno] }, {"novec": [n_data_ppm, n_data_weno]} 
+
+
+def splitMethods(data):
+    '''
+Split data dictionary by method entry value
+    '''
+    meth = data["method"]
+    unique_meth,ind,counts = np.unique(meth,return_index=True,return_counts=True)
+    out_ppm = {"method": "ppm"}
+    out_weno = {"method": "weno"}
+    for key in list(data.keys()):
+        if key != "method":
+            out_ppm[key] = data[key][ind[data["method"]==1]]
+            out_weno[key] = data[key][ind[data["method"]==0]]
+        else: pass
+    return out_ppm, out_weno
+    
+def splitRes(data):
+   '''
+Split data dictionary by resolution. Onnly leaves one data point per unique resolution, averages out multiple data points if present.
+   '''
+   res = data["resolution"]
+   unique_res,ind,counts = np.unique(res,return_index=True,return_counts=True)
+   n = len(res)
+   out = {
+    "resolution":      unique_res,
+   }
+   
+   for key in list(data.keys()):
+                   if key!="method" and key!= "resolution":
+                                   out[key] = np.zeros([1,len(unique_res)])
+                                   for i in range(len(unique_res)):
+                                                out[key][0,i]=(1.0/counts[i] * sum(data[key][data["resolution"]==unique_res[i]]))
+                           
+           #else: out[key]=data[key][i]
+                   else: pass 
+   return out
+
+
+
+
+
+
+def load(fname):
+    ''' Load the file using std open'''
+    f = open(fname,'r')
+
+    data = []
+    for line in f.readlines():
+        data.append(line.replace('\n','\t').split('\t'))
+
+    f.close()
+
+    return data

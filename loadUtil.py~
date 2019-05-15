@@ -1,0 +1,150 @@
+#!/hpc/group/G_NUMREL/python_envs/data_analysis2/bin/python
+
+import sys
+import glob 
+import re 
+import os 
+import numpy as np 
+
+# The class only serves as a mean to keep track of all different matching patterns
+
+class OutFile:  
+    
+    name_pattern = ".o(\d+)"
+    exec_time_pattern ="\s*\|\s*Total time for simulation[\s\|]*(?:\d+\.\d+[\s\|]*){6}\d+\.\d+\s*"
+    data_pattern = "\d+\.\d+"
+    parfile_pattern = "Parameter file:\s+(/hpc/group/G_NUMREL/EinsteinToolkit/ET_2018_09/Cactus/par/\S+(?:weno|ppm)\S+\d{2}.par)"
+    final_time_pattern = "INFO (TimerReport): Timer Report before terminating at iteration \d+ time (\d+)"
+    max_malloc_pattern = "Maximum allocated memory:\s+(\d+\.\d+)\s+[MB]"
+    me_per_hour_pattern = "\s*2048\s*\d+\.\d+\s*\|\s*\d+\.\d+\s*\d+\.\d+\s*\|\s*(\d+\.\d+)\s*\|\s*(?:\d+\.\d+(?:e[-+]?\d+)?)+\s*\d+\.\d+\s*"
+
+    file_header = '''
+##################    O U T  ####################################### F I L E ##############################################\n
+###########################################################################################################################\n
+#job_id |  timeofday[secs] | getrusage[secs] | cycle[secs] | avg_cycle[secs] | sdv_cycle[secs] | min_cycle[secs] | max_cycle [secs] | me_per_hour | max_alloc_mem[MB] \n
+###########################################################################################################################\n
+'''
+    def __init__(self,simname):
+        self.name=simname+self.name_pattern
+        self.header="#########################"+simname+"#########################"
+    
+
+######################
+#
+#     FUNCTIONS 
+#                   
+######################
+
+
+def fullDataExtraction(path,simname="\S+",read_dir="./readFiles",out_file_path="./data/carpetData.data"):
+    path, files = findCarpetOutput(path,simname)
+    print(path,files)
+    for f in files:
+        line, job_id = readOutFile(os.path.join(path,f),read_dir)
+        print(line)
+        readData(line,job_id,out_file_path)
+    return
+
+
+def findCarpetOutput(path,simname="\S+"):
+    '''
+    Find output from Carpet in path directory, supposes output files are in the form used at HPCUniPR i.e. <simname>.o%j
+
+    >>> FindCarpetOutput(/example/path/,"pippo")
+    >>> [ 'pippo.o646660', pippo.o65770' ]
+
+    '''
+    if os.path.isfile(path): path,filename =os.path.split(path)
+    sim = OutFile(simname)
+    name_pattern = re.compile(sim.name)
+    dir_content = os.listdir(path)
+    files = list(filter(name_pattern.match,dir_content))
+    return path, files
+
+def readOutFile(file_path, re_patterns = None, read_dir='./readFiles'):
+    '''
+    Given the path of a Carpet output file, it extracts the data line from it and its job id and moves it to a folder with all he names of already read files
+
+    >>> readOutFile("/example/path/file")
+    >>> " Total Simulation Time  | ....... |", "654332"
+
+    '''
+    if not os.path.isfile(file_path): sys.exit("File path specified is invalid")
+    try: f = open(file_path,'r')
+    except: raise FileNotFoundError("File could not be opened")
+    body = f.read()
+    f.close()
+    # compile patterns
+    exec_time_re = re.compile(OutFile.exec_time_pattern)
+    parfile_re = re.compile(OutFile.parfile_pattern)
+    data_re = re.compile("\d+\.\d+")
+    max_malloc_re = re.compile(OutFile.max_malloc_pattern)
+    me_ph_re = re.compile(OutFile.me_per_hour_pattern)
+    # match patterns
+    line = exec_time_re.search(body)
+    parfile_path = parfile_re.search(body)
+    me_ph = me_ph_re.search(body)
+    max_malloc = max_malloc_re.search(body)
+    # extract times 
+    path, name = os.path.split(file_path)
+    job_id = re.search("\d+",name).group()
+    if line is None: raise ValueError("Output file number %d contains no output" %(job_id))
+    # we suppose that an output containing the final times of execution also contains all other data...
+    line = line.group()
+    max_malloc = max_malloc.group(1)
+    parfile_path = parfile_path.group(1)
+    me_ph = me_ph.group(1)
+    data = data_re.findall(line)
+    moveReadFile(path,name,read_dir)
+    return data, job_id, parfile_path, me_ph, max_malloc
+
+    # move file that has been read to a directory
+    # this is only provisionary, a better way would be to keep track of read file tags
+
+
+def moveReadFile(path, name, read_dir="./ReadFiles"):
+    old_path = os.path.join(path,name)
+    new_path = os.path.join(read_dir,name)
+    if not os.path.isdir(read_dir): 
+        try: os.makedirs(read_dir)
+        except: sys.exit("An error occurred while read_dir was being created")
+    os.rename(old_path,new_path)
+    return
+
+def readData(data, job_id, me_ph, max_malloc, out_file_path="./data/carpetData.data", custom_header = None, endline=True, separator=" | "):
+    '''
+    Given the output data line e.g. extracted by readOutFile, takes the valuable data from it and writes it to a file, if the file doesn't yet exist it creates it
+
+    '''
+## if the directory in which out_file should be placed doesn't exist the program can't handle. SOLVE
+    if os.path.isfile(out_file_path):
+        try: f = open(out_file_path,'a')
+        except: raise ValueError("File could not be opened")
+    else:
+        try: f = open(out_file_path, 'w+')
+        except: raise ValueError("File could not be created")
+        if custom_header: f.writelines(custom_header)
+        else: f.writelines(OutFile.file_header)
+    f.write(job_id+separator)
+    for d in data:
+        f.write(d+separator)
+    f.write(me_ph+separator)
+    f.write(max_malloc+separator)
+    if endline: f.write("\n")
+    f.close
+    return 
+
+def extractCustomData(line,pattern, mode="line"):
+    if not type(line)==str: 
+        try: line = line.group()
+        except: raise ValueError("Line provided was not a file path")
+    regexp = re.compile(pattern)
+    res = regexp.findall(line)
+    return res
+
+#def isRead(file_path, readList='outFiles.read'):
+#    if not os.path.isfile(file_path): sys.exit("Invalid filename specified")
+#    if os.path.isfile(readList):
+#        try: f = open(readList, 'r')
+#        except: sys.exit("Could not open readList
+#
